@@ -19,6 +19,12 @@
 
 ## 安装
 
+### 从 crates.io 安装（推荐）
+
+```bash
+cargo install qr-tester
+```
+
 ### 从源码安装
 
 ```bash

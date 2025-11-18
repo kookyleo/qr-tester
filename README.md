@@ -19,6 +19,12 @@ A CLI tool for scanning QR codes from images and benchmarking performance.
 
 ## Installation
 
+### From crates.io
+
+```bash
+cargo install qr-tester
+```
+
 ### From Source
 
 ```bash
