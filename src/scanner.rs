@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use bardecoder::default_decoder;
 use image::{DynamicImage, GrayImage};
 use log::{debug, error, info};
 use rxing::{
@@ -270,6 +271,28 @@ impl QrScanner {
             duration_ms: timing.to_ms(zedbar_duration),
         });
 
+        // Step 7: Try bardecoder (image-based decoder)
+        let bardecoder_timer = Timer::start();
+        let mut bardecoder_codes = std::collections::HashSet::new();
+        debug!("Trying bardecoder for detection");
+        match self.detect_with_bardecoder(&working_img) {
+            Ok(codes) if !codes.is_empty() => {
+                debug!("bardecoder found {} codes", codes.len());
+                bardecoder_codes.extend(codes);
+            }
+            Err(e) => {
+                debug!("bardecoder failed: {:?}", e);
+            }
+            _ => {}
+        }
+        let bardecoder_duration = bardecoder_timer.elapsed();
+        all_results.extend(bardecoder_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "bardecoder".to_string(),
+            qr_codes: bardecoder_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(bardecoder_duration),
+        });
+
         timing.decode_qr = decode_timer.elapsed();
         timing.total = total_timer.elapsed();
 
@@ -438,6 +461,41 @@ impl QrScanner {
             {
                 debug!("zedbar decoded QR code successfully");
                 results.push(text.to_string());
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Detect QR codes using bardecoder (image-based decoder)
+    fn detect_with_bardecoder(&self, img: &DynamicImage) -> Result<Vec<String>> {
+        // bardecoder uses image 0.24, we use 0.25, need to convert via bytes
+        let mut bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .context("Failed to encode image to PNG")?;
+
+        // Load using image 0.24
+        let img_v24 =
+            image_v24::load_from_memory(&bytes).context("Failed to decode image for bardecoder")?;
+
+        let decoder = default_decoder();
+        let decoded_results = decoder.decode(&img_v24);
+
+        debug!("bardecoder found {} results", decoded_results.len());
+
+        let mut results = Vec::new();
+        for result in decoded_results {
+            match result {
+                Ok(text) => {
+                    debug!("bardecoder decoded QR code successfully");
+                    results.push(text);
+                }
+                Err(e) => {
+                    debug!("bardecoder decode failed: {:?}", e);
+                }
             }
         }
 

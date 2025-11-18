@@ -14,11 +14,13 @@ readme = "README.md"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 image = "0.25"
+image_v24 = { package = "image", version = "0.24" }
 rqrr = "0.8"
 rxing = "0.8"
 quircs = "0.10"
 zbar-rust = "0.0.24"
 zedbar = "0.1"
+bardecoder = "0.5"
 imageproc = "0.25"
 walkdir = "2.5"
 anyhow = "1.0"
