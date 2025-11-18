@@ -149,15 +149,25 @@ fn output_text(results: &[scanner::ScanResult], stats: &timer::ScanStats, _verbo
     println!();
 }
 
-/// Truncate path to fit column width
+/// Truncate path to fit column width (handles UTF-8 safely)
 fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
+    // Use char count instead of byte count for proper handling
+    let char_count = path.chars().count();
+
+    if char_count <= max_len {
         return path.to_string();
     }
 
     let prefix = "...";
-    let available = max_len - prefix.len();
-    format!("{}{}", prefix, &path[path.len() - available..])
+    let prefix_len = prefix.chars().count();
+    let available = max_len.saturating_sub(prefix_len);
+
+    // Skip chars from the start and take the remaining
+    let suffix: String = path
+        .chars()
+        .skip(char_count.saturating_sub(available))
+        .collect();
+    format!("{}{}", prefix, suffix)
 }
 
 /// Output results in JSON format

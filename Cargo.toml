@@ -1,7 +1,7 @@
 [package]
 name = "qr-tester"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.1"
+edition = "2024"
 authors = ["kookyleo <kookyleo@gmail.com>"]
 license = "Apache-2.0"
 description = "A CLI tool to scan QR codes from images and benchmark performance"
