@@ -529,6 +529,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a246d82be1c9d791c5dfde9a2bd045fc3cbba3fa2b11ad558f27d01712f00569"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "enum-ordinalize"
 version = "4.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1330,6 +1339,7 @@ dependencies = [
  "serde_json",
  "walkdir",
  "zbar-rust",
+ "zedbar",
 ]
 
 [[package]]
@@ -1508,6 +1518,12 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
+
+[[package]]
+name = "reed-solomon"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13de68c877a77f35885442ac72c8beb7c2f0b09380c43b734b9d63d1db69ee54"
 
 [[package]]
 name = "regex"
@@ -2080,6 +2096,20 @@ dependencies = [
  "enum-ordinalize",
  "libc",
  "pkg-config",
+]
+
+[[package]]
+name = "zedbar"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "233ccad02b27a9a788965c5e1ab8d87880e699d6f35504f7efe47d5b37a6e896"
+dependencies = [
+ "clap",
+ "encoding_rs",
+ "image",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+ "reed-solomon",
 ]
 
 [[package]]

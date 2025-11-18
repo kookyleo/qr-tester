@@ -57,7 +57,6 @@ impl ImagePreprocessor {
         }
     }
 
-
     /// Generate multiple preprocessed versions of an image
     pub fn generate_variants(img: &DynamicImage) -> Vec<(String, GrayImage)> {
         let mut variants = Vec::new();

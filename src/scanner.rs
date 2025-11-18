@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zbar_rust::ZBarImageScanner;
+use zedbar::{Image as ZedbarImage, Scanner as ZedbarScanner};
 
 use crate::preprocessor::ImagePreprocessor;
 use crate::timer::{ScanStats, ScanTiming, Timer};
@@ -37,7 +38,6 @@ pub struct ScanResult {
     /// Error message if failed
     pub error: Option<String>,
 }
-
 
 /// QR code scanner
 pub struct QrScanner {
@@ -241,6 +241,35 @@ impl QrScanner {
             duration_ms: timing.to_ms(zbar_duration),
         });
 
+        // Step 6: Try zedbar (pure Rust barcode scanner)
+        let zedbar_timer = Timer::start();
+        let mut zedbar_codes = std::collections::HashSet::new();
+        debug!("Trying zedbar for detection");
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying zedbar with variant: {}", variant_name);
+            match self.detect_with_zedbar(gray_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "zedbar found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    zedbar_codes.extend(codes);
+                }
+                Err(e) => {
+                    debug!("zedbar failed: {:?}", e);
+                }
+                _ => {}
+            }
+        }
+        let zedbar_duration = zedbar_timer.elapsed();
+        all_results.extend(zedbar_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "zedbar".to_string(),
+            qr_codes: zedbar_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(zedbar_duration),
+        });
+
         timing.decode_qr = decode_timer.elapsed();
         timing.total = total_timer.elapsed();
 
@@ -379,6 +408,36 @@ impl QrScanner {
             if let Ok(text) = String::from_utf8(data) {
                 debug!("ZBar decoded QR code successfully");
                 results.push(text);
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Detect QR codes using zedbar (pure Rust barcode scanner)
+    fn detect_with_zedbar(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        let width = gray_img.width();
+        let height = gray_img.height();
+
+        // Create zedbar image and scanner
+        let mut img = ZedbarImage::from_gray(gray_img.as_raw(), width, height)
+            .map_err(|e| anyhow::anyhow!("zedbar image creation failed: {:?}", e))?;
+
+        let mut scanner = ZedbarScanner::new();
+
+        // Scan for barcodes
+        let symbols = scanner.scan(&mut img);
+
+        debug!("zedbar found {} symbols", symbols.len());
+
+        let mut results = Vec::new();
+        for symbol in symbols {
+            // Only include QR codes
+            if matches!(symbol.symbol_type(), zedbar::symbol::SymbolType::QrCode)
+                && let Some(text) = symbol.data_string()
+            {
+                debug!("zedbar decoded QR code successfully");
+                results.push(text.to_string());
             }
         }
 
