@@ -275,15 +275,22 @@ impl QrScanner {
         let bardecoder_timer = Timer::start();
         let mut bardecoder_codes = std::collections::HashSet::new();
         debug!("Trying bardecoder for detection");
-        match self.detect_with_bardecoder(&working_img) {
-            Ok(codes) if !codes.is_empty() => {
-                debug!("bardecoder found {} codes", codes.len());
-                bardecoder_codes.extend(codes);
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying bardecoder with variant: {}", variant_name);
+            match self.detect_with_bardecoder(gray_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "bardecoder found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    bardecoder_codes.extend(codes);
+                }
+                Err(e) => {
+                    debug!("bardecoder failed: {:?}", e);
+                }
+                _ => {}
             }
-            Err(e) => {
-                debug!("bardecoder failed: {:?}", e);
-            }
-            _ => {}
         }
         let bardecoder_duration = bardecoder_timer.elapsed();
         all_results.extend(bardecoder_codes.iter().cloned());
@@ -468,18 +475,19 @@ impl QrScanner {
     }
 
     /// Detect QR codes using bardecoder (image-based decoder)
-    fn detect_with_bardecoder(&self, img: &DynamicImage) -> Result<Vec<String>> {
-        // bardecoder uses image 0.24, we use 0.25, need to convert via bytes
-        let mut bytes = Vec::new();
-        img.write_to(
-            &mut std::io::Cursor::new(&mut bytes),
-            image::ImageFormat::Png,
-        )
-        .context("Failed to encode image to PNG")?;
+    fn detect_with_bardecoder(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        // bardecoder uses image 0.24, we use 0.25
+        // Convert via raw pixels to avoid slow PNG encode/decode
+        let width = gray_img.width();
+        let height = gray_img.height();
+        let pixels = gray_img.as_raw().clone();
 
-        // Load using image 0.24
-        let img_v24 =
-            image_v24::load_from_memory(&bytes).context("Failed to decode image for bardecoder")?;
+        // Create image 0.24 GrayImage from raw pixels
+        let gray_v24 = image_v24::GrayImage::from_raw(width, height, pixels)
+            .context("Failed to create image_v24::GrayImage")?;
+
+        // Convert to DynamicImage for bardecoder
+        let img_v24 = image_v24::DynamicImage::ImageLuma8(gray_v24);
 
         let decoder = default_decoder();
         let decoded_results = decoder.decode(&img_v24);
