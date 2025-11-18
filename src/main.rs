@@ -1,3 +1,4 @@
+mod preprocessor;
 mod scanner;
 mod timer;
 
@@ -91,50 +92,76 @@ fn output_text(results: &[scanner::ScanResult], stats: &timer::ScanStats, _verbo
 
     println!(
         "\n{}",
-        "QR Code Detection Performance Test Results"
+        "QR Code Detection Performance Test Results (By Engine)"
             .bright_cyan()
             .bold()
     );
-    println!("{}", "=".repeat(150).bright_blue());
+    println!("{}", "=".repeat(140).bright_blue());
 
     // Table header
     println!(
-        "{:<55} {:>6} {:>14} {:>14} {:>14} {:>14} {:>14}",
+        "{:<50} {:>10} {:>6} {:>14} {:>14} {:>14} {:>14}",
         "File Path".bright_yellow(),
+        "Engine".bright_yellow(),
         "QRs".bright_yellow(),
-        "Grayscale".bright_yellow(),
-        "Prepare".bright_yellow(),
-        "Detect Grids".bright_yellow(),
-        "Decode QR".bright_yellow(),
-        "Total".bright_yellow()
+        "Preprocess".bright_yellow(),
+        "Detection".bright_yellow(),
+        "Total".bright_yellow(),
+        "File Total".bright_yellow()
     );
-    println!("{}", "-".repeat(150));
+    println!("{}", "-".repeat(140));
 
-    // Data rows
+    // Data rows - show each engine's result separately
     for result in results {
         if !result.success {
             println!(
-                "{:<55} {}",
-                truncate_path(&result.file_path.display().to_string(), 55),
+                "{:<50} {}",
+                truncate_path(&result.file_path.display().to_string(), 50),
                 "FAILED".red()
             );
             continue;
         }
 
+        let path = truncate_path(&result.file_path.display().to_string(), 50);
         let timing = &result.timing.qr_detection;
-        println!(
-            "{:<55} {:>6} {:>13.2}ms {:>13.2}ms {:>13.2}ms {:>13.2}ms {:>13.2}ms",
-            truncate_path(&result.file_path.display().to_string(), 55),
-            result.qr_count(),
-            timing.to_ms(timing.to_grayscale),
-            timing.to_ms(timing.prepare_image),
-            timing.to_ms(timing.detect_grids),
-            timing.to_ms(timing.decode_qr),
-            timing.to_ms(timing.total)
-        );
+        let file_total = timing.to_ms(timing.total);
+
+        // Show each engine's results as separate rows
+        let preprocess_time = timing.to_ms(timing.to_grayscale);
+
+        for (idx, engine_result) in result.engine_results.iter().enumerate() {
+            let display_path = if idx == 0 {
+                path.clone()
+            } else {
+                "".to_string()
+            };
+            let display_file_total = if idx == 0 {
+                format!("{:.2}ms", file_total)
+            } else {
+                "".to_string()
+            };
+
+            // Each engine has its own detection time
+            let detection_time = engine_result.duration_ms;
+            let engine_total = preprocess_time + detection_time;
+
+            println!(
+                "{:<50} {:>10} {:>6} {:>13.2}ms {:>13.2}ms {:>13.2}ms {:>14}",
+                display_path,
+                engine_result.engine_name,
+                engine_result.qr_codes.len(),
+                preprocess_time,
+                detection_time,
+                engine_total,
+                display_file_total
+            );
+        }
+
+        // Add separator between files
+        println!("{}", "-".repeat(140).dimmed());
     }
 
-    println!("{}", "=".repeat(150).bright_blue());
+    println!("{}", "=".repeat(140).bright_blue());
 
     // Statistics
     println!(

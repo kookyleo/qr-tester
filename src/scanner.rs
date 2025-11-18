@@ -1,19 +1,35 @@
 use anyhow::{Context, Result};
-use image::DynamicImage;
-use log::{debug, error, info, warn};
+use image::{DynamicImage, GrayImage};
+use log::{debug, error, info};
+use rxing::{
+    BinaryBitmap, DecodeHints, Exceptions, Luma8LuminanceSource, Reader, common::HybridBinarizer,
+    qrcode::QRCodeReader,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use zbar_rust::ZBarImageScanner;
 
+use crate::preprocessor::ImagePreprocessor;
 use crate::timer::{ScanStats, ScanTiming, Timer};
+
+/// Results from individual detection engine
+#[derive(Debug, Clone)]
+pub struct EngineResult {
+    pub engine_name: String,
+    pub qr_codes: Vec<String>,
+    pub duration_ms: f64, // Time spent by this engine alone
+}
 
 /// Scan result for a single file
 #[derive(Debug)]
 pub struct ScanResult {
     /// File path
     pub file_path: PathBuf,
-    /// Detected QR code data
+    /// Detected QR code data (deduplicated across all engines)
     pub qr_codes: Vec<String>,
+    /// Results from each detection engine
+    pub engine_results: Vec<EngineResult>,
     /// Timing information
     pub timing: ScanTiming,
     /// Success status
@@ -22,11 +38,6 @@ pub struct ScanResult {
     pub error: Option<String>,
 }
 
-impl ScanResult {
-    pub fn qr_count(&self) -> usize {
-        self.qr_codes.len()
-    }
-}
 
 /// QR code scanner
 pub struct QrScanner {
@@ -55,7 +66,7 @@ impl QrScanner {
             .with_context(|| format!("Failed to decode image: {}", path.display()))?;
 
         // QR detection with detailed timing
-        let qr_codes = self.detect_qr_codes(&img, &mut timing.qr_detection)?;
+        let (qr_codes, engine_results) = self.detect_qr_codes(&img, &mut timing.qr_detection)?;
 
         timing.total = total_timer.elapsed();
 
@@ -72,70 +83,304 @@ impl QrScanner {
         Ok(ScanResult {
             file_path: path.to_path_buf(),
             qr_codes,
+            engine_results,
             timing,
             success: true,
             error: None,
         })
     }
 
-    /// Detect QR codes from image with detailed timing
+    /// Detect QR codes from image with detailed timing (multi-engine approach)
+    /// Returns (all_qr_codes, engine_results)
     fn detect_qr_codes(
         &self,
         img: &DynamicImage,
         timing: &mut crate::timer::QrDetectionTiming,
-    ) -> Result<Vec<String>> {
+    ) -> Result<(Vec<String>, Vec<EngineResult>)> {
         let total_timer = Timer::start();
 
-        // Step 1: Convert to grayscale
+        // Step 0: Resize large images for better performance and detection
         let gray_timer = Timer::start();
-        let gray_img = img.to_luma8();
+        let width = img.width();
+        let height = img.height();
+        let max_dimension = width.max(height);
+
+        let working_img = if max_dimension > 2000 {
+            let scale = 2000.0 / max_dimension as f32;
+            debug!(
+                "Resizing large image ({}x{}) by {:.2}x",
+                width, height, scale
+            );
+            ImagePreprocessor::resize(img, scale)
+        } else {
+            img.clone()
+        };
+
+        // Step 1: Convert to grayscale and preprocess
+        let variants = ImagePreprocessor::generate_variants(&working_img);
         timing.to_grayscale = gray_timer.elapsed();
         debug!(
-            "Grayscale conversion completed in {:.2}ms",
+            "Image preprocessing completed, generated {} variants in {:.2}ms",
+            variants.len(),
             timing.to_ms(timing.to_grayscale)
         );
 
-        // Step 2: Prepare image for detection
+        let mut all_results = std::collections::HashSet::new();
+        let mut engine_results = Vec::new();
+
+        // Step 2: Try rqrr (fast)
         let prepare_timer = Timer::start();
-        let mut img_data = rqrr::PreparedImage::prepare(gray_img);
+        let rqrr_timer = Timer::start();
+        let mut rqrr_codes = std::collections::HashSet::new();
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying rqrr with variant: {}", variant_name);
+            match self.detect_with_rqrr(gray_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "rqrr found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    rqrr_codes.extend(codes);
+                }
+                _ => {}
+            }
+        }
+        let rqrr_duration = rqrr_timer.elapsed();
+        all_results.extend(rqrr_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "rqrr".to_string(),
+            qr_codes: rqrr_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(rqrr_duration),
+        });
         timing.prepare_image = prepare_timer.elapsed();
-        debug!(
-            "Image preparation completed in {:.2}ms",
-            timing.to_ms(timing.prepare_image)
-        );
+        timing.detect_grids = prepare_timer.elapsed();
 
-        // Step 3: Detect grids
-        let detect_timer = Timer::start();
-        let grids = img_data.detect_grids();
-        timing.detect_grids = detect_timer.elapsed();
-        debug!(
-            "Grid detection completed, found {} grids in {:.2}ms",
-            grids.len(),
-            timing.to_ms(timing.detect_grids)
-        );
-
-        // Step 4: Decode QR codes
+        // Step 3: Try rxing (more robust)
         let decode_timer = Timer::start();
+        let rxing_timer = Timer::start();
+        let mut rxing_codes = std::collections::HashSet::new();
+        debug!("Trying rxing for more robust detection");
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying rxing with variant: {}", variant_name);
+            match self.detect_with_rxing(gray_img, &working_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "rxing found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    rxing_codes.extend(codes);
+                }
+                _ => {}
+            }
+        }
+        let rxing_duration = rxing_timer.elapsed();
+        all_results.extend(rxing_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "rxing".to_string(),
+            qr_codes: rxing_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(rxing_duration),
+        });
+
+        // Step 4: Try quircs (pure Rust library)
+        let quircs_timer = Timer::start();
+        let mut quircs_codes = std::collections::HashSet::new();
+        debug!("Trying quircs for detection");
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying quircs with variant: {}", variant_name);
+            match self.detect_with_quircs(gray_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "quircs found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    quircs_codes.extend(codes);
+                }
+                Err(e) => {
+                    debug!("quircs failed: {:?}", e);
+                }
+                _ => {}
+            }
+        }
+        let quircs_duration = quircs_timer.elapsed();
+        all_results.extend(quircs_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "quircs".to_string(),
+            qr_codes: quircs_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(quircs_duration),
+        });
+
+        // Step 5: Try ZBar (mature C library with strong error correction)
+        let zbar_timer = Timer::start();
+        let mut zbar_codes = std::collections::HashSet::new();
+        debug!("Trying ZBar for detection");
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying ZBar with variant: {}", variant_name);
+            match self.detect_with_zbar(gray_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "ZBar found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    zbar_codes.extend(codes);
+                }
+                Err(e) => {
+                    debug!("ZBar failed: {:?}", e);
+                }
+                _ => {}
+            }
+        }
+        let zbar_duration = zbar_timer.elapsed();
+        all_results.extend(zbar_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "zbar".to_string(),
+            qr_codes: zbar_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(zbar_duration),
+        });
+
+        timing.decode_qr = decode_timer.elapsed();
+        timing.total = total_timer.elapsed();
+
+        let results: Vec<String> = all_results.into_iter().collect();
+        debug!(
+            "Total QR codes found: {} in {:.2}ms",
+            results.len(),
+            timing.to_ms(timing.total)
+        );
+
+        Ok((results, engine_results))
+    }
+
+    /// Detect QR codes using rqrr (fast, good for standard QR codes)
+    fn detect_with_rqrr(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        let mut img_data = rqrr::PreparedImage::prepare(gray_img.clone());
+        let grids = img_data.detect_grids();
+
+        debug!("rqrr detected {} grids", grids.len());
+
         let mut results = Vec::new();
-        for grid in grids {
+        for (i, grid) in grids.iter().enumerate() {
             match grid.decode() {
                 Ok((_meta, content)) => {
-                    debug!("Successfully decoded QR code: {}", content);
+                    debug!("rqrr grid {} decoded successfully", i);
                     results.push(content);
                 }
                 Err(e) => {
-                    warn!("Failed to decode QR code: {:?}", e);
+                    debug!("rqrr grid {} decode failed: {:?}", i, e);
                 }
             }
         }
-        timing.decode_qr = decode_timer.elapsed();
-        debug!(
-            "QR decoding completed, {} successful in {:.2}ms",
-            results.len(),
-            timing.to_ms(timing.decode_qr)
-        );
 
-        timing.total = total_timer.elapsed();
+        if !results.is_empty() {
+            debug!(
+                "rqrr successfully decoded {}/{} grids",
+                results.len(),
+                grids.len()
+            );
+        }
+
+        Ok(results)
+    }
+
+    /// Detect QR codes using rxing (robust, handles deformed/multiple QR codes)
+    fn detect_with_rxing(&self, gray_img: &GrayImage, _img: &DynamicImage) -> Result<Vec<String>> {
+        let width = gray_img.width();
+        let height = gray_img.height();
+
+        // Convert to rxing format
+        let luminance_source = Luma8LuminanceSource::new(gray_img.as_raw().clone(), width, height);
+
+        let mut bitmap = BinaryBitmap::new(HybridBinarizer::new(luminance_source));
+
+        // Configure hints
+        let hints = DecodeHints::default();
+
+        let mut reader = QRCodeReader::new();
+
+        let mut results = Vec::new();
+
+        // Try to decode
+        match reader.decode_with_hints(&mut bitmap, &hints) {
+            Ok(result) => {
+                results.push(result.getText().to_string());
+            }
+            Err(e) => {
+                if !matches!(e, Exceptions::NotFoundException(_)) {
+                    debug!("rxing decode failed: {:?}", e);
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Detect QR codes using quircs (pure Rust, based on quirc library)
+    fn detect_with_quircs(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        let width = gray_img.width() as usize;
+        let height = gray_img.height() as usize;
+
+        // Create quircs decoder
+        let mut decoder = quircs::Quirc::new();
+
+        // Identify QR codes in the image
+        let codes = decoder.identify(width, height, gray_img.as_raw());
+
+        let mut results = Vec::new();
+        let mut count = 0;
+
+        for code in codes {
+            count += 1;
+            match code {
+                Ok(code) => match code.decode() {
+                    Ok(decoded) => {
+                        if let Ok(text) = std::str::from_utf8(&decoded.payload) {
+                            debug!("quircs decoded QR code successfully");
+                            results.push(text.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        debug!("quircs decode failed: {:?}", e);
+                    }
+                },
+                Err(e) => {
+                    debug!("quircs extract failed: {:?}", e);
+                }
+            }
+        }
+
+        if count > 0 {
+            debug!("quircs identified {} codes", count);
+        }
+
+        Ok(results)
+    }
+
+    /// Detect QR codes using ZBar (mature C library with strong error correction)
+    fn detect_with_zbar(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        let width = gray_img.width() as usize;
+        let height = gray_img.height() as usize;
+
+        // Create ZBar scanner
+        let mut scanner = ZBarImageScanner::new();
+
+        // Scan the image
+        let scan_results = scanner
+            .scan_y800(gray_img.as_raw(), width as u32, height as u32)
+            .map_err(|e| anyhow::anyhow!("ZBar scan failed: {:?}", e))?;
+
+        debug!("ZBar found {} symbols", scan_results.len());
+
+        let mut results = Vec::new();
+        for symbol in scan_results {
+            let data = symbol.data;
+            if let Ok(text) = String::from_utf8(data) {
+                debug!("ZBar decoded QR code successfully");
+                results.push(text);
+            }
+        }
 
         Ok(results)
     }
@@ -184,6 +429,7 @@ impl QrScanner {
                     results.push(ScanResult {
                         file_path: path.to_path_buf(),
                         qr_codes: Vec::new(),
+                        engine_results: Vec::new(),
                         timing: ScanTiming::new(),
                         success: false,
                         error: Some(e.to_string()),
