@@ -463,6 +463,9 @@ impl QrScanner {
 
     /// Detect QR codes using zbar-pack (safe vendored ZBar bindings)
     fn detect_with_zbar_pack(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        // Ensure verbosity is set to 0 (ZBar might reset it internally)
+        zbar_pack::set_verbosity(0);
+
         let width = gray_img.width();
         let height = gray_img.height();
 
