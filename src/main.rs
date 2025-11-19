@@ -76,7 +76,7 @@ fn main() -> Result<()> {
 
 /// Initialize logging system
 fn init_logger(debug: bool) {
-    let log_level = if debug { "debug" } else { "info" };
+    let log_level = if debug { "debug" } else { "error" };
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
         .format_timestamp_millis()
