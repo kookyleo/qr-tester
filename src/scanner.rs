@@ -10,6 +10,7 @@ use rzbar::{Image as RzbarImage, Scanner as RzbarScanner};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use zbar_pack::{Image as ZBarPackImage, ImageScanner as ZBarPackScanner};
 use zbar_rust::ZBarImageScanner;
 use zedbar::{Image as ZedbarImage, Scanner as ZedbarScanner};
 
@@ -330,6 +331,35 @@ impl QrScanner {
             duration_ms: timing.to_ms(rzbar_duration),
         });
 
+        // Step 9: Try zbar-pack (safe vendored ZBar bindings)
+        let zbar_pack_timer = Timer::start();
+        let mut zbar_pack_codes = std::collections::HashSet::new();
+        debug!("Trying zbar-pack for detection");
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying zbar-pack with variant: {}", variant_name);
+            match self.detect_with_zbar_pack(gray_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "zbar-pack found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    zbar_pack_codes.extend(codes);
+                }
+                Err(e) => {
+                    debug!("zbar-pack failed: {:?}", e);
+                }
+                _ => {}
+            }
+        }
+        let zbar_pack_duration = zbar_pack_timer.elapsed();
+        all_results.extend(zbar_pack_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "zbar-pack".to_string(),
+            qr_codes: zbar_pack_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(zbar_pack_duration),
+        });
+
         timing.decode_qr = decode_timer.elapsed();
         timing.total = total_timer.elapsed();
 
@@ -567,6 +597,36 @@ impl QrScanner {
             }
         }
 
+        Ok(results)
+    }
+
+    /// Detect QR codes using zbar-pack (safe vendored ZBar bindings)
+    fn detect_with_zbar_pack(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        let width = gray_img.width();
+        let height = gray_img.height();
+
+        // Create zbar-pack image and scanner
+        let image = ZBarPackImage::from_gray(gray_img.as_raw(), width, height)
+            .map_err(|e| anyhow::anyhow!("zbar-pack image creation failed: {:?}", e))?;
+
+        let mut scanner = ZBarPackScanner::new()
+            .map_err(|e| anyhow::anyhow!("zbar-pack scanner creation failed: {:?}", e))?;
+
+        // Scan for barcodes
+        let symbols = scanner
+            .scan_image(&image)
+            .map_err(|e| anyhow::anyhow!("zbar-pack scan failed: {:?}", e))?;
+
+        let mut results = Vec::new();
+        for symbol in symbols {
+            // Only include QR codes
+            if symbol.symbol_type() == zbar_pack::SymbolType::QRCODE {
+                debug!("zbar-pack decoded QR code successfully");
+                results.push(symbol.data().to_string());
+            }
+        }
+
+        debug!("zbar-pack found {} QR codes", results.len());
         Ok(results)
     }
 
