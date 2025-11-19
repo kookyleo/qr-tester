@@ -402,25 +402,39 @@ impl QrScanner {
         // Convert to DynamicImage for bardecoder
         let img_v24 = image_v24::DynamicImage::ImageLuma8(gray_v24);
 
-        let decoder = default_decoder();
-        let decoded_results = decoder.decode(&img_v24);
+        // Catch panic from bardecoder (has bugs with certain image sizes)
+        let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let decoder = default_decoder();
+            decoder.decode(&img_v24)
+        }));
 
-        debug!("bardecoder found {} results", decoded_results.len());
+        match decode_result {
+            Ok(decoded_results) => {
+                debug!("bardecoder found {} results", decoded_results.len());
 
-        let mut results = Vec::new();
-        for result in decoded_results {
-            match result {
-                Ok(text) => {
-                    debug!("bardecoder decoded QR code successfully");
-                    results.push(text);
+                let mut results = Vec::new();
+                for result in decoded_results {
+                    match result {
+                        Ok(text) => {
+                            debug!("bardecoder decoded QR code successfully");
+                            results.push(text);
+                        }
+                        Err(e) => {
+                            debug!("bardecoder decode failed: {:?}", e);
+                        }
+                    }
                 }
-                Err(e) => {
-                    debug!("bardecoder decode failed: {:?}", e);
-                }
+
+                Ok(results)
+            }
+            Err(e) => {
+                debug!(
+                    "bardecoder panicked (known bug with certain image sizes): {:?}",
+                    e
+                );
+                Ok(Vec::new()) // Return empty results on panic
             }
         }
-
-        Ok(results)
     }
 
     /// Detect QR codes using zbar-pack (safe vendored ZBar bindings)
