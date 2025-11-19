@@ -90,6 +90,37 @@ impl QrScanner {
         })
     }
 
+    /// Safe wrapper to catch panics from detection engines
+    fn safe_detect<F>(
+        &self,
+        engine_name: &str,
+        variant_name: &str,
+        detect_fn: F,
+    ) -> Result<Vec<String>>
+    where
+        F: FnOnce() -> Result<Vec<String>> + std::panic::UnwindSafe,
+    {
+        let result = std::panic::catch_unwind(detect_fn);
+
+        match result {
+            Ok(Ok(codes)) => Ok(codes),
+            Ok(Err(e)) => {
+                debug!(
+                    "{} failed on variant {}: {:?}",
+                    engine_name, variant_name, e
+                );
+                Ok(Vec::new())
+            }
+            Err(panic_info) => {
+                error!(
+                    "{} panicked on variant {} (likely a bug in the library): {:?}",
+                    engine_name, variant_name, panic_info
+                );
+                Ok(Vec::new())
+            }
+        }
+    }
+
     /// Detect QR codes from image with detailed timing (multi-engine approach)
     /// Returns (all_qr_codes, engine_results)
     fn detect_qr_codes(
@@ -134,7 +165,10 @@ impl QrScanner {
         let mut rqrr_codes = std::collections::HashSet::new();
         for (variant_name, gray_img) in &variants {
             debug!("Trying rqrr with variant: {}", variant_name);
-            match self.detect_with_rqrr(gray_img) {
+            let gray_img_clone = gray_img.clone();
+            match self.safe_detect("rqrr", variant_name, move || {
+                self.detect_with_rqrr(&gray_img_clone)
+            }) {
                 Ok(codes) if !codes.is_empty() => {
                     debug!(
                         "rqrr found {} codes with variant: {}",
@@ -163,7 +197,11 @@ impl QrScanner {
         debug!("Trying rxing for more robust detection");
         for (variant_name, gray_img) in &variants {
             debug!("Trying rxing with variant: {}", variant_name);
-            match self.detect_with_rxing(gray_img, &working_img) {
+            let gray_img_clone = gray_img.clone();
+            let working_img_clone = working_img.clone();
+            match self.safe_detect("rxing", variant_name, move || {
+                self.detect_with_rxing(&gray_img_clone, &working_img_clone)
+            }) {
                 Ok(codes) if !codes.is_empty() => {
                     debug!(
                         "rxing found {} codes with variant: {}",
@@ -189,7 +227,10 @@ impl QrScanner {
         debug!("Trying quircs for detection");
         for (variant_name, gray_img) in &variants {
             debug!("Trying quircs with variant: {}", variant_name);
-            match self.detect_with_quircs(gray_img) {
+            let gray_img_clone = gray_img.clone();
+            match self.safe_detect("quircs", variant_name, move || {
+                self.detect_with_quircs(&gray_img_clone)
+            }) {
                 Ok(codes) if !codes.is_empty() => {
                     debug!(
                         "quircs found {} codes with variant: {}",
@@ -197,9 +238,6 @@ impl QrScanner {
                         variant_name
                     );
                     quircs_codes.extend(codes);
-                }
-                Err(e) => {
-                    debug!("quircs failed: {:?}", e);
                 }
                 _ => {}
             }
@@ -218,7 +256,10 @@ impl QrScanner {
         debug!("Trying bardecoder for detection");
         for (variant_name, gray_img) in &variants {
             debug!("Trying bardecoder with variant: {}", variant_name);
-            match self.detect_with_bardecoder(gray_img) {
+            let gray_img_clone = gray_img.clone();
+            match self.safe_detect("bardecoder", variant_name, move || {
+                self.detect_with_bardecoder(&gray_img_clone)
+            }) {
                 Ok(codes) if !codes.is_empty() => {
                     debug!(
                         "bardecoder found {} codes with variant: {}",
@@ -226,9 +267,6 @@ impl QrScanner {
                         variant_name
                     );
                     bardecoder_codes.extend(codes);
-                }
-                Err(e) => {
-                    debug!("bardecoder failed: {:?}", e);
                 }
                 _ => {}
             }
@@ -247,7 +285,10 @@ impl QrScanner {
         debug!("Trying zbar-pack for detection");
         for (variant_name, gray_img) in &variants {
             debug!("Trying zbar-pack with variant: {}", variant_name);
-            match self.detect_with_zbar_pack(gray_img) {
+            let gray_img_clone = gray_img.clone();
+            match self.safe_detect("zbar-pack", variant_name, move || {
+                self.detect_with_zbar_pack(&gray_img_clone)
+            }) {
                 Ok(codes) if !codes.is_empty() => {
                     debug!(
                         "zbar-pack found {} codes with variant: {}",
@@ -255,9 +296,6 @@ impl QrScanner {
                         variant_name
                     );
                     zbar_pack_codes.extend(codes);
-                }
-                Err(e) => {
-                    debug!("zbar-pack failed: {:?}", e);
                 }
                 _ => {}
             }
@@ -402,39 +440,25 @@ impl QrScanner {
         // Convert to DynamicImage for bardecoder
         let img_v24 = image_v24::DynamicImage::ImageLuma8(gray_v24);
 
-        // Catch panic from bardecoder (has bugs with certain image sizes)
-        let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let decoder = default_decoder();
-            decoder.decode(&img_v24)
-        }));
+        let decoder = default_decoder();
+        let decoded_results = decoder.decode(&img_v24);
 
-        match decode_result {
-            Ok(decoded_results) => {
-                debug!("bardecoder found {} results", decoded_results.len());
+        debug!("bardecoder found {} results", decoded_results.len());
 
-                let mut results = Vec::new();
-                for result in decoded_results {
-                    match result {
-                        Ok(text) => {
-                            debug!("bardecoder decoded QR code successfully");
-                            results.push(text);
-                        }
-                        Err(e) => {
-                            debug!("bardecoder decode failed: {:?}", e);
-                        }
-                    }
+        let mut results = Vec::new();
+        for result in decoded_results {
+            match result {
+                Ok(text) => {
+                    debug!("bardecoder decoded QR code successfully");
+                    results.push(text);
                 }
-
-                Ok(results)
-            }
-            Err(e) => {
-                debug!(
-                    "bardecoder panicked (known bug with certain image sizes): {:?}",
-                    e
-                );
-                Ok(Vec::new()) // Return empty results on panic
+                Err(e) => {
+                    debug!("bardecoder decode failed: {:?}", e);
+                }
             }
         }
+
+        Ok(results)
     }
 
     /// Detect QR codes using zbar-pack (safe vendored ZBar bindings)
