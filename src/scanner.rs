@@ -6,13 +6,10 @@ use rxing::{
     BinaryBitmap, DecodeHints, Exceptions, Luma8LuminanceSource, Reader, common::HybridBinarizer,
     qrcode::QRCodeReader,
 };
-use rzbar::{Image as RzbarImage, Scanner as RzbarScanner};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zbar_pack::{Image as ZBarPackImage, ImageScanner as ZBarPackScanner};
-use zbar_rust::ZBarImageScanner;
-use zedbar::{Image as ZedbarImage, Scanner as ZedbarScanner};
 
 use crate::preprocessor::ImagePreprocessor;
 use crate::timer::{ScanStats, ScanTiming, Timer};
@@ -215,65 +212,7 @@ impl QrScanner {
             duration_ms: timing.to_ms(quircs_duration),
         });
 
-        // Step 5: Try ZBar (mature C library with strong error correction)
-        let zbar_timer = Timer::start();
-        let mut zbar_codes = std::collections::HashSet::new();
-        debug!("Trying ZBar for detection");
-        for (variant_name, gray_img) in &variants {
-            debug!("Trying ZBar with variant: {}", variant_name);
-            match self.detect_with_zbar(gray_img) {
-                Ok(codes) if !codes.is_empty() => {
-                    debug!(
-                        "ZBar found {} codes with variant: {}",
-                        codes.len(),
-                        variant_name
-                    );
-                    zbar_codes.extend(codes);
-                }
-                Err(e) => {
-                    debug!("ZBar failed: {:?}", e);
-                }
-                _ => {}
-            }
-        }
-        let zbar_duration = zbar_timer.elapsed();
-        all_results.extend(zbar_codes.iter().cloned());
-        engine_results.push(EngineResult {
-            engine_name: "zbar".to_string(),
-            qr_codes: zbar_codes.into_iter().collect(),
-            duration_ms: timing.to_ms(zbar_duration),
-        });
-
-        // Step 6: Try zedbar (pure Rust barcode scanner)
-        let zedbar_timer = Timer::start();
-        let mut zedbar_codes = std::collections::HashSet::new();
-        debug!("Trying zedbar for detection");
-        for (variant_name, gray_img) in &variants {
-            debug!("Trying zedbar with variant: {}", variant_name);
-            match self.detect_with_zedbar(gray_img) {
-                Ok(codes) if !codes.is_empty() => {
-                    debug!(
-                        "zedbar found {} codes with variant: {}",
-                        codes.len(),
-                        variant_name
-                    );
-                    zedbar_codes.extend(codes);
-                }
-                Err(e) => {
-                    debug!("zedbar failed: {:?}", e);
-                }
-                _ => {}
-            }
-        }
-        let zedbar_duration = zedbar_timer.elapsed();
-        all_results.extend(zedbar_codes.iter().cloned());
-        engine_results.push(EngineResult {
-            engine_name: "zedbar".to_string(),
-            qr_codes: zedbar_codes.into_iter().collect(),
-            duration_ms: timing.to_ms(zedbar_duration),
-        });
-
-        // Step 7: Try bardecoder (image-based decoder)
+        // Step 5: Try bardecoder (image-based decoder)
         let bardecoder_timer = Timer::start();
         let mut bardecoder_codes = std::collections::HashSet::new();
         debug!("Trying bardecoder for detection");
@@ -302,36 +241,7 @@ impl QrScanner {
             duration_ms: timing.to_ms(bardecoder_duration),
         });
 
-        // Step 8: Try rzbar (local optimized version of zedbar)
-        let rzbar_timer = Timer::start();
-        let mut rzbar_codes = std::collections::HashSet::new();
-        debug!("Trying rzbar for detection");
-        for (variant_name, gray_img) in &variants {
-            debug!("Trying rzbar with variant: {}", variant_name);
-            match self.detect_with_rzbar(gray_img) {
-                Ok(codes) if !codes.is_empty() => {
-                    debug!(
-                        "rzbar found {} codes with variant: {}",
-                        codes.len(),
-                        variant_name
-                    );
-                    rzbar_codes.extend(codes);
-                }
-                Err(e) => {
-                    debug!("rzbar failed: {:?}", e);
-                }
-                _ => {}
-            }
-        }
-        let rzbar_duration = rzbar_timer.elapsed();
-        all_results.extend(rzbar_codes.iter().cloned());
-        engine_results.push(EngineResult {
-            engine_name: "rzbar".to_string(),
-            qr_codes: rzbar_codes.into_iter().collect(),
-            duration_ms: timing.to_ms(rzbar_duration),
-        });
-
-        // Step 9: Try zbar-pack (safe vendored ZBar bindings)
+        // Step 6: Try zbar-pack (safe vendored ZBar bindings)
         let zbar_pack_timer = Timer::start();
         let mut zbar_pack_codes = std::collections::HashSet::new();
         debug!("Trying zbar-pack for detection");
@@ -477,63 +387,6 @@ impl QrScanner {
         Ok(results)
     }
 
-    /// Detect QR codes using ZBar (mature C library with strong error correction)
-    fn detect_with_zbar(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
-        let width = gray_img.width() as usize;
-        let height = gray_img.height() as usize;
-
-        // Create ZBar scanner
-        let mut scanner = ZBarImageScanner::new();
-
-        // Scan the image
-        let scan_results = scanner
-            .scan_y800(gray_img.as_raw(), width as u32, height as u32)
-            .map_err(|e| anyhow::anyhow!("ZBar scan failed: {:?}", e))?;
-
-        debug!("ZBar found {} symbols", scan_results.len());
-
-        let mut results = Vec::new();
-        for symbol in scan_results {
-            let data = symbol.data;
-            if let Ok(text) = String::from_utf8(data) {
-                debug!("ZBar decoded QR code successfully");
-                results.push(text);
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Detect QR codes using zedbar (pure Rust barcode scanner)
-    fn detect_with_zedbar(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
-        let width = gray_img.width();
-        let height = gray_img.height();
-
-        // Create zedbar image and scanner
-        let mut img = ZedbarImage::from_gray(gray_img.as_raw(), width, height)
-            .map_err(|e| anyhow::anyhow!("zedbar image creation failed: {:?}", e))?;
-
-        let mut scanner = ZedbarScanner::new();
-
-        // Scan for barcodes
-        let symbols = scanner.scan(&mut img);
-
-        debug!("zedbar found {} symbols", symbols.len());
-
-        let mut results = Vec::new();
-        for symbol in symbols {
-            // Only include QR codes
-            if matches!(symbol.symbol_type(), zedbar::symbol::SymbolType::QrCode)
-                && let Some(text) = symbol.data_string()
-            {
-                debug!("zedbar decoded QR code successfully");
-                results.push(text.to_string());
-            }
-        }
-
-        Ok(results)
-    }
-
     /// Detect QR codes using bardecoder (image-based decoder)
     fn detect_with_bardecoder(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
         // bardecoder uses image 0.24, we use 0.25
@@ -564,36 +417,6 @@ impl QrScanner {
                 Err(e) => {
                     debug!("bardecoder decode failed: {:?}", e);
                 }
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Detect QR codes using rzbar (local optimized zedbar)
-    fn detect_with_rzbar(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
-        let width = gray_img.width();
-        let height = gray_img.height();
-
-        // Create rzbar image and scanner
-        let mut img = RzbarImage::from_gray(gray_img.as_raw(), width, height)
-            .map_err(|e| anyhow::anyhow!("rzbar image creation failed: {:?}", e))?;
-
-        let mut scanner = RzbarScanner::new();
-
-        // Scan for barcodes
-        let symbols = scanner.scan(&mut img);
-
-        debug!("rzbar found {} symbols", symbols.len());
-
-        let mut results = Vec::new();
-        for symbol in symbols {
-            // Only include QR codes
-            if matches!(symbol.symbol_type(), rzbar::symbol::SymbolType::QrCode)
-                && let Some(text) = symbol.data_string()
-            {
-                debug!("rzbar decoded QR code successfully");
-                results.push(text.to_string());
             }
         }
 
