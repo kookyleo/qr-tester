@@ -1,6 +1,6 @@
 [package]
 name = "qr-tester"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 authors = ["kookyleo <kookyleo@gmail.com>"]
 license = "Apache-2.0"

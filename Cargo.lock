@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "qr-tester"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "bardecoder",
