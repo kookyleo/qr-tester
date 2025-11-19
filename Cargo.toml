@@ -20,6 +20,7 @@ rxing = "0.8"
 quircs = "0.10"
 zbar-rust = "0.0.24"
 zedbar = "0.1"
+rzbar = { path = "/d/rzbar", package = "zedbar" }
 bardecoder = "0.5"
 imageproc = "0.25"
 walkdir = "2.5"

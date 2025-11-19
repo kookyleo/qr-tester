@@ -6,6 +6,7 @@ use rxing::{
     BinaryBitmap, DecodeHints, Exceptions, Luma8LuminanceSource, Reader, common::HybridBinarizer,
     qrcode::QRCodeReader,
 };
+use rzbar::{Image as RzbarImage, Scanner as RzbarScanner};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -300,6 +301,35 @@ impl QrScanner {
             duration_ms: timing.to_ms(bardecoder_duration),
         });
 
+        // Step 8: Try rzbar (local optimized version of zedbar)
+        let rzbar_timer = Timer::start();
+        let mut rzbar_codes = std::collections::HashSet::new();
+        debug!("Trying rzbar for detection");
+        for (variant_name, gray_img) in &variants {
+            debug!("Trying rzbar with variant: {}", variant_name);
+            match self.detect_with_rzbar(gray_img) {
+                Ok(codes) if !codes.is_empty() => {
+                    debug!(
+                        "rzbar found {} codes with variant: {}",
+                        codes.len(),
+                        variant_name
+                    );
+                    rzbar_codes.extend(codes);
+                }
+                Err(e) => {
+                    debug!("rzbar failed: {:?}", e);
+                }
+                _ => {}
+            }
+        }
+        let rzbar_duration = rzbar_timer.elapsed();
+        all_results.extend(rzbar_codes.iter().cloned());
+        engine_results.push(EngineResult {
+            engine_name: "rzbar".to_string(),
+            qr_codes: rzbar_codes.into_iter().collect(),
+            duration_ms: timing.to_ms(rzbar_duration),
+        });
+
         timing.decode_qr = decode_timer.elapsed();
         timing.total = total_timer.elapsed();
 
@@ -504,6 +534,36 @@ impl QrScanner {
                 Err(e) => {
                     debug!("bardecoder decode failed: {:?}", e);
                 }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Detect QR codes using rzbar (local optimized zedbar)
+    fn detect_with_rzbar(&self, gray_img: &GrayImage) -> Result<Vec<String>> {
+        let width = gray_img.width();
+        let height = gray_img.height();
+
+        // Create rzbar image and scanner
+        let mut img = RzbarImage::from_gray(gray_img.as_raw(), width, height)
+            .map_err(|e| anyhow::anyhow!("rzbar image creation failed: {:?}", e))?;
+
+        let mut scanner = RzbarScanner::new();
+
+        // Scan for barcodes
+        let symbols = scanner.scan(&mut img);
+
+        debug!("rzbar found {} symbols", symbols.len());
+
+        let mut results = Vec::new();
+        for symbol in symbols {
+            // Only include QR codes
+            if matches!(symbol.symbol_type(), rzbar::symbol::SymbolType::QrCode)
+                && let Some(text) = symbol.data_string()
+            {
+                debug!("rzbar decoded QR code successfully");
+                results.push(text.to_string());
             }
         }
 
