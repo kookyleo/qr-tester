@@ -37,6 +37,11 @@ fn main() -> Result<()> {
     // Initialize logger
     init_logger(args.debug);
 
+    // Silence ZBar C library warnings unless debug mode is enabled
+    if !args.debug {
+        zbar_pack::set_verbosity(0);
+    }
+
     info!("QR code scanner starting");
     info!("Input path: {}", args.input.display());
 
