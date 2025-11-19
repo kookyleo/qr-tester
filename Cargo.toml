@@ -1,6 +1,6 @@
 [package]
 name = "qr-tester"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2024"
 authors = ["kookyleo <kookyleo@gmail.com>"]
 license = "Apache-2.0"
@@ -18,7 +18,7 @@ image_v24 = { package = "image", version = "0.24" }
 rqrr = "0.8"
 rxing = "0.8"
 quircs = "0.10"
-zbar-pack = "0.1.4"
+zbar-pack = "0.1.5"
 bardecoder = "0.5"
 imageproc = "0.25"
 walkdir = "2.5"

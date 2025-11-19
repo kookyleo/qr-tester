@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "qr-tester"
-version = "0.5.5"
+version = "0.5.6"
 dependencies = [
  "anyhow",
  "bardecoder",
@@ -2332,18 +2332,18 @@ checksum = "7a5a4b21e1a62b67a2970e6831bc091d7b87e119e7f9791aef9702e3bef04448"
 
 [[package]]
 name = "zbar-pack"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f4ea6d4bbf8dcc077d4c4b93ee176d65d1d30a6323746e47dc430a126b5bc59"
+checksum = "2ec10b515e308ad4b692bc98adbdc763fc1cb4cf2658ffeef01a9e69ef68a43c"
 dependencies = [
  "zbar-sys",
 ]
 
 [[package]]
 name = "zbar-src"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06e62faa5920db0951329a262146abc866aa8240100afdca392d1fc79469b303"
+checksum = "08504347c15993a0cf036e263e6d345285e46df2d72d13661f118f55078cde33"
 dependencies = [
  "cc",
  "pkg-config",
@@ -2351,9 +2351,9 @@ dependencies = [
 
 [[package]]
 name = "zbar-sys"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50d0777af8276f5e8da7a525356ea3cfbc8f0c0a62126014e14b8384759e037c"
+checksum = "60dc544e955cc6ca0890afa249ef38514ff7189dd854bc9841dd16d027cc9aa8"
 dependencies = [
  "bindgen",
  "pkg-config",
