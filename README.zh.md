@@ -62,6 +62,7 @@ qr-tester /path/to/images/
 - `-v, --verbose`: 详细输出模式
 - `-j, --json`: 以 JSON 格式输出结果
 - `-d, --debug`: 启用调试日志
+- `-a, --analyze`: 详细分析 QR 码检测失败原因
 - `-h, --help`: 显示帮助信息
 - `-V, --version`: 显示版本信息
 
@@ -84,6 +85,17 @@ qr-tester -j qrcode.png
 ```bash
 qr-tester -d -v /path/to/images/
 ```
+
+4. 分析 QR 码检测失败原因：
+
+```bash
+qr-tester -a problematic_qr.png
+```
+
+这会生成详细的分析报告，包括：
+- 各引擎 (rqrr, quircs, rxing) 的检测状态
+- 具体的错误类型及其含义
+- 常见问题的修复建议
 
 ## 输出格式
 

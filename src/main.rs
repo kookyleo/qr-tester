@@ -1,7 +1,9 @@
+mod analyzer;
 mod preprocessor;
 mod scanner;
 mod timer;
 
+use analyzer::QrAnalyzer;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use colored::Colorize;
@@ -29,6 +31,10 @@ struct Args {
     /// Enable debug logging
     #[arg(short, long)]
     debug: bool,
+
+    /// Analyze QR code detection failures in detail
+    #[arg(short, long)]
+    analyze: bool,
 }
 
 fn main() -> Result<()> {
@@ -48,6 +54,26 @@ fn main() -> Result<()> {
     // Validate input path
     if !args.input.exists() {
         bail!("Path does not exist: {}", args.input.display());
+    }
+
+    // Handle analyze mode
+    if args.analyze {
+        if !args.input.is_file() {
+            bail!("Analyze mode requires a single file, not a directory");
+        }
+
+        let analyzer = QrAnalyzer::new();
+        let report = analyzer
+            .analyze_file(&args.input)
+            .with_context(|| format!("Failed to analyze file: {}", args.input.display()))?;
+
+        if args.json {
+            output_analysis_json(&report)?;
+        } else {
+            analyzer.print_report(&report);
+        }
+
+        return Ok(());
     }
 
     let mut scanner = QrScanner::new(args.verbose);
@@ -233,6 +259,74 @@ fn output_json(results: &[scanner::ScanResult], stats: &timer::ScanStats) -> Res
     let output = JsonOutput {
         results: json_results,
         stats,
+    };
+
+    let json = serde_json::to_string_pretty(&output).context("Failed to serialize JSON")?;
+
+    println!("{}", json);
+
+    Ok(())
+}
+
+/// Output analysis results in JSON format
+fn output_analysis_json(report: &analyzer::AnalysisReport) -> Result<()> {
+    #[derive(serde::Serialize)]
+    struct JsonAnalysisOutput {
+        file_path: String,
+        image_size: (u32, u32),
+        variants_tested: usize,
+        overall_success: bool,
+        engine_analyses: Vec<JsonEngineAnalysis>,
+        recommendations: Vec<String>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct JsonEngineAnalysis {
+        engine_name: String,
+        grids_detected: usize,
+        success: bool,
+        summary: String,
+        decode_results: Vec<JsonGridAnalysis>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct JsonGridAnalysis {
+        grid_index: usize,
+        decode_success: bool,
+        error_type: Option<String>,
+        error_detail: String,
+        content: Option<String>,
+    }
+
+    let engine_analyses: Vec<JsonEngineAnalysis> = report
+        .engine_analyses
+        .iter()
+        .map(|a| JsonEngineAnalysis {
+            engine_name: a.engine_name.clone(),
+            grids_detected: a.grids_detected,
+            success: a.success,
+            summary: a.summary.clone(),
+            decode_results: a
+                .decode_results
+                .iter()
+                .map(|r| JsonGridAnalysis {
+                    grid_index: r.grid_index,
+                    decode_success: r.decode_success,
+                    error_type: r.error_type.clone(),
+                    error_detail: r.error_detail.clone(),
+                    content: r.content.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    let output = JsonAnalysisOutput {
+        file_path: report.file_path.clone(),
+        image_size: report.image_size,
+        variants_tested: report.variants_tested,
+        overall_success: report.overall_success,
+        engine_analyses,
+        recommendations: report.recommendations.clone(),
     };
 
     let json = serde_json::to_string_pretty(&output).context("Failed to serialize JSON")?;

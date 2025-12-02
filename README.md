@@ -60,6 +60,7 @@ qr-tester /path/to/images/
 - `-v, --verbose`: Verbose output mode
 - `-j, --json`: Output results in JSON format
 - `-d, --debug`: Enable debug logging
+- `-a, --analyze`: Analyze QR code detection failures in detail
 - `-h, --help`: Display help information
 - `-V, --version`: Display version information
 
@@ -82,6 +83,17 @@ qr-tester -j qrcode.png
 ```bash
 qr-tester -d -v /path/to/images/
 ```
+
+4. Analyze QR code detection failures:
+
+```bash
+qr-tester -a problematic_qr.png
+```
+
+This produces detailed analysis including:
+- Detection status from each engine (rqrr, quircs, rxing)
+- Specific error types and their meanings
+- Recommendations for fixing detection issues
 
 ## Output Format
 
